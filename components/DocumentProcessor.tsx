@@ -1,0 +1,688 @@
+'use client';
+
+import { useState } from 'react';
+
+interface DocumentSection {
+  id: string;
+  title: string;
+  content: string;
+  filledContent?: string;
+  order: number;
+  hasPlaceholder?: boolean;
+  placeholder?: string;
+}
+
+interface ContextualDocument {
+  id: string;
+  name: string;
+  content: string;
+  file: File;
+}
+
+type WorkflowStep = 'upload' | 'analyze' | 'fill' | 'export';
+
+export default function DocumentProcessor() {
+  const [currentStep, setCurrentStep] = useState<WorkflowStep>('upload');
+  const [templateFile, setTemplateFile] = useState<File | null>(null);
+  const [contextualFiles, setContextualFiles] = useState<ContextualDocument[]>([]);
+  const [projectPrompt, setProjectPrompt] = useState<string>('');
+  const [sections, setSections] = useState<DocumentSection[]>([]);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isFilling, setIsFilling] = useState<{ [key: string]: boolean }>({});
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [outputFormat, setOutputFormat] = useState<'same' | 'docx' | 'pdf' | 'txt' | 'html'>('same');
+  const [generatedDocument, setGeneratedDocument] = useState<{
+    document: string;
+    filename: string;
+    mimeType: string;
+  } | null>(null);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+
+  const handleTemplateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setTemplateFile(file);
+      setError(null);
+      setSections([]);
+      setCurrentStep('upload');
+    }
+  };
+
+  const handleContextualUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    const newDocs: ContextualDocument[] = [];
+    for (const file of files) {
+      try {
+        // Extract text from contextual document using the analyze endpoint
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        const response = await fetch('/api/document/analyze', {
+          method: 'POST',
+          body: formData,
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+          // Combine all sections into one content string
+          const content = data.originalContent || 
+            (data.sections || []).map((s: DocumentSection) => s.content).join('\n\n');
+          
+          newDocs.push({
+            id: `ctx-${Date.now()}-${Math.random()}`,
+            name: file.name,
+            content: content.substring(0, 20000), // Limit content size
+            file,
+          });
+        } else {
+          // Fallback: try to read as text
+          const text = await file.text();
+          newDocs.push({
+            id: `ctx-${Date.now()}-${Math.random()}`,
+            name: file.name,
+            content: text.substring(0, 20000),
+            file,
+          });
+        }
+      } catch (err) {
+        console.error('Error processing contextual document:', err);
+        // Still add the file even if extraction fails
+        newDocs.push({
+          id: `ctx-${Date.now()}-${Math.random()}`,
+          name: file.name,
+          content: '',
+          file,
+        });
+      }
+    }
+    
+    setContextualFiles([...contextualFiles, ...newDocs]);
+  };
+
+  const handleAnalyze = async () => {
+    if (!templateFile) {
+      setError('Please upload a template file first');
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', templateFile);
+
+      console.log('Sending analyze request for file:', templateFile.name, templateFile.type, templateFile.size);
+
+      const response = await fetch('/api/document/analyze', {
+        method: 'POST',
+        body: formData,
+      });
+
+      console.log('Response status:', response.status, response.statusText);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}: ${response.statusText}` }));
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        const newSections = data.sections || [];
+        setSections(newSections);
+        // Start with all sections collapsed so users can expand them
+        setExpandedSections(new Set());
+        setCurrentStep('fill');
+      } else {
+        throw new Error(data.error || 'Failed to analyze document');
+      }
+    } catch (error) {
+      console.error('Analysis error:', error);
+      setError(error instanceof Error ? error.message : 'Failed to analyze document. Please check the console for details.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleFillSection = async (sectionId: string) => {
+    if (!projectPrompt.trim()) {
+      setError('Please provide a project description first');
+      return;
+    }
+
+    const section = sections.find(s => s.id === sectionId);
+    if (!section) return;
+
+    setIsFilling({ ...isFilling, [sectionId]: true });
+    setError(null);
+
+    try {
+      const contextualDocs = contextualFiles.map(doc => ({
+        name: doc.name,
+        content: doc.content,
+      }));
+
+      console.log('Filling section:', section.title);
+      console.log('Request payload:', {
+        sectionTitle: section.title,
+        sectionContent: section.content?.substring(0, 100),
+        projectPrompt: projectPrompt.substring(0, 100),
+        contextualDocsCount: contextualDocs.length,
+      });
+
+      let response;
+      try {
+        response = await fetch('/api/document/fill-section', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            sectionTitle: section.title,
+            sectionContent: section.content,
+            projectPrompt,
+            contextualDocuments: contextualDocs,
+          }),
+        });
+      } catch (fetchError) {
+        console.error('Network error during fetch:', fetchError);
+        if (fetchError instanceof TypeError && fetchError.message.includes('Failed to fetch')) {
+          throw new Error(`Cannot connect to server. Please make sure the development server is running at ${window.location.origin}. If you're using a different port, please check the server console for the correct URL.`);
+        }
+        throw fetchError;
+      }
+
+      console.log('Response status:', response.status, response.statusText);
+
+      if (!response.ok) {
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          const text = await response.text();
+          console.error('Failed to parse error response:', text);
+          throw new Error(`HTTP ${response.status}: ${response.statusText}. Response: ${text.substring(0, 200)}`);
+        }
+        throw new Error(errorData.error || errorData.details || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log('Successfully filled section:', section.title);
+
+      if (data.success) {
+        setSections(sections.map(s =>
+          s.id === sectionId
+            ? { ...s, filledContent: data.filledContent }
+            : s
+        ));
+      } else {
+        throw new Error(data.error || 'Failed to fill section');
+      }
+    } catch (error) {
+      console.error('Fill section error:', error);
+      setError(error instanceof Error ? error.message : 'Failed to fill section. Please check the console for details.');
+    } finally {
+      setIsFilling({ ...isFilling, [sectionId]: false });
+    }
+  };
+
+  const handleFillAll = async () => {
+    if (!projectPrompt.trim()) {
+      setError('Please provide a project description first');
+      return;
+    }
+
+    for (const section of sections) {
+      if (!section.filledContent) {
+        await handleFillSection(section.id);
+        // Small delay between fills to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+  };
+
+  const handleGenerate = async () => {
+    if (!templateFile) {
+      setError('Template file is required');
+      return;
+    }
+
+    const unfilledSections = sections.filter(s => !s.filledContent);
+    if (unfilledSections.length > 0) {
+      setError(`Please fill all sections first. ${unfilledSections.length} section(s) remaining.`);
+      return;
+    }
+
+    setIsGenerating(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('templateFile', templateFile);
+      formData.append('sections', JSON.stringify(sections.map(s => ({
+        title: s.title,
+        content: s.filledContent || s.content,
+      }))));
+      formData.append('outputFormat', outputFormat);
+
+      const response = await fetch('/api/document/generate', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}: ${response.statusText}` }));
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        setGeneratedDocument({
+          document: data.document,
+          filename: data.filename,
+          mimeType: data.mimeType,
+        });
+        setCurrentStep('export');
+      } else {
+        throw new Error(data.error || 'Failed to generate document');
+      }
+    } catch (error) {
+      console.error('Generate document error:', error);
+      setError(error instanceof Error ? error.message : 'Failed to generate document. Please check the console for details.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleDownload = () => {
+    if (!generatedDocument) return;
+
+    const byteCharacters = atob(generatedDocument.document);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: generatedDocument.mimeType });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = generatedDocument.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const updateSectionContent = (sectionId: string, content: string) => {
+    setSections(sections.map(s =>
+      s.id === sectionId
+        ? { ...s, filledContent: content }
+        : s
+    ));
+  };
+
+  const removeContextualDoc = (id: string) => {
+    setContextualFiles(contextualFiles.filter(doc => doc.id !== id));
+  };
+
+  const toggleSection = (sectionId: string) => {
+    console.log('Toggling section:', sectionId);
+    console.log('Current expanded sections before:', Array.from(expandedSections));
+    setExpandedSections(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(sectionId)) {
+        newSet.delete(sectionId);
+        console.log('Collapsing section:', sectionId);
+      } else {
+        newSet.add(sectionId);
+        console.log('Expanding section:', sectionId);
+      }
+      console.log('New expanded sections:', Array.from(newSet));
+      return newSet;
+    });
+  };
+
+  return (
+    <div className="space-y-6 max-w-5xl mx-auto">
+      {/* Header */}
+      <div>
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-12 h-12 bg-gradient-to-br from-black to-black rounded-xl flex items-center justify-center shadow-lg">
+            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
+            Project Development
+          </h2>
+        </div>
+        <p className="text-gray-600 text-lg leading-relaxed">
+          Upload a template document and contextual reference materials. The AI will analyze your template, 
+          identify sections to fill, and help you create a complete project document.
+        </p>
+      </div>
+
+      {/* Progress Steps */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between max-w-4xl mx-auto">
+          {['upload', 'analyze', 'fill', 'export'].map((step, index) => {
+            const stepNames = ['Upload', 'Analyze', 'Fill', 'Export'];
+            const isActive = currentStep === step;
+            const currentStepIndex = ['upload', 'analyze', 'fill', 'export'].indexOf(currentStep);
+            const isCompleted = currentStepIndex > index;
+            
+            return (
+              <div key={step} className="flex items-center flex-1 min-w-0">
+                <div className="flex flex-col items-center flex-1 min-w-0">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold transition-all flex-shrink-0 ${
+                    isActive || isCompleted
+                      ? 'bg-gradient-to-br from-black to-black text-white shadow-lg'
+                      : 'bg-gray-200 text-gray-500'
+                  }`}>
+                    {isCompleted ? '✓' : index + 1}
+                  </div>
+                  <span className={`mt-2 text-xs sm:text-sm font-medium text-center ${
+                    isActive ? 'text-black' : 'text-gray-500'
+                  }`}>
+                    {stepNames[index]}
+                  </span>
+                </div>
+                {index < 3 && (
+                  <div className={`flex-1 h-1 mx-2 min-w-[20px] max-w-[60px] ${
+                    isCompleted ? 'bg-black' : 'bg-gray-200'
+                  }`} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Step 1: Upload */}
+      {currentStep === 'upload' && (
+        <div className="space-y-6">
+          {/* Project Description */}
+          <div className="bg-gradient-to-br from-black to-black border-2 border-black rounded-2xl p-6">
+            <label className="block text-sm font-semibold text-white mb-3">
+              Project Description / Prompt
+            </label>
+            <textarea
+              value={projectPrompt}
+              onChange={(e) => setProjectPrompt(e.target.value)}
+              placeholder="Describe your project, goals, requirements, timeline, or any specific context..."
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white resize-none"
+              rows={5}
+            />
+          </div>
+
+          {/* Template Upload */}
+          <div className="bg-white border-2 border-dashed border-gray-300 rounded-2xl p-8">
+            <label className="block text-sm font-semibold text-gray-700 mb-3">
+              Template Document (Structure/Format)
+            </label>
+            <input
+              type="file"
+              onChange={handleTemplateUpload}
+              accept=".docx,.pdf,.txt"
+              className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-black file:text-white hover:file:bg-black"
+            />
+            <p className="text-xs text-gray-500 mt-2">
+              Upload the template that defines the structure and format of your final document
+            </p>
+            {templateFile && (
+              <div className="mt-3 p-3 bg-black border border-black rounded-lg">
+                <span className="text-sm text-white font-medium">✓ {templateFile.name}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Contextual Documents Upload */}
+          <div className="bg-white border-2 border-dashed border-gray-300 rounded-2xl p-8">
+            <label className="block text-sm font-semibold text-gray-700 mb-3">
+              Contextual Documents (Reference Materials) - Optional
+            </label>
+            <input
+              type="file"
+              onChange={handleContextualUpload}
+              accept=".docx,.pdf,.txt"
+              multiple
+              className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-black file:text-white hover:file:bg-black"
+            />
+            <p className="text-xs text-gray-500 mt-2">
+              Upload reference documents that provide context for filling the template
+            </p>
+            {contextualFiles.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {contextualFiles.map(doc => (
+                  <div key={doc.id} className="flex items-center justify-between p-3 bg-black border border-black rounded-lg">
+                    <span className="text-sm text-white font-medium">{doc.name}</span>
+                    <button
+                      onClick={() => removeContextualDoc(doc.id)}
+                      className="text-red-500 hover:text-red-700"
+                    >
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Analyze Button */}
+          {templateFile && (
+            <div className="flex justify-center">
+              <button
+                onClick={handleAnalyze}
+                disabled={isAnalyzing}
+                className="px-8 py-3 bg-gradient-to-r from-black to-black text-white rounded-xl font-semibold shadow-lg hover:shadow-xl hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+              >
+                {isAnalyzing ? 'Analyzing...' : 'Analyze Template'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Step 2: Fill Sections */}
+      {currentStep === 'fill' && sections.length > 0 && (
+        <div className="space-y-6">
+          <div className="bg-black border border-black rounded-xl p-4">
+            <p className="text-sm text-white">
+              <strong>{sections.length}</strong> section(s) identified. Fill each section individually or fill all at once.
+            </p>
+          </div>
+
+          {/* Fill All Button */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <h3 className="text-xl font-bold text-gray-800">Document Sections</h3>
+            <button
+              onClick={handleFillAll}
+              disabled={Object.values(isFilling).some(v => v)}
+              className="px-6 py-2 bg-gradient-to-r from-black to-black text-white rounded-lg font-semibold hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all whitespace-nowrap"
+            >
+              Fill All Sections
+            </button>
+          </div>
+
+          {/* Sections */}
+          <div className="space-y-4">
+            {sections.map((section, index) => {
+              const isExpanded = expandedSections.has(section.id);
+              console.log('Rendering section:', section.id, 'isExpanded:', isExpanded);
+              return (
+                <div key={section.id} className="bg-white border-2 border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                  {/* Section Header - Clickable */}
+                  <div className="flex items-start justify-between p-6">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        console.log('Section header clicked:', section.id, 'Current expanded:', Array.from(expandedSections));
+                        toggleSection(section.id);
+                      }}
+                      className="flex items-start gap-3 flex-1 text-left bg-transparent border-0 cursor-pointer hover:bg-gray-50 -m-6 p-6 w-full transition-colors select-none"
+                    >
+                      <div className="flex-shrink-0 mt-1">
+                        <svg 
+                          className={`w-5 h-5 text-gray-500 transition-transform ${isExpanded ? 'transform rotate-90' : ''}`}
+                          fill="none" 
+                          stroke="currentColor" 
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-lg font-bold text-gray-800 mb-1">
+                          {section.title || `Section ${index + 1}`}
+                        </h4>
+                        {!isExpanded && section.content && !section.filledContent && (
+                          <p className="text-sm text-gray-500 italic truncate">
+                            {section.content.substring(0, 80)}...
+                          </p>
+                        )}
+                        {!isExpanded && section.filledContent && (
+                          <p className="text-sm text-black font-medium">
+                            ✓ Filled - Click to edit
+                          </p>
+                        )}
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        handleFillSection(section.id);
+                      }}
+                      disabled={isFilling[section.id]}
+                      className="px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex-shrink-0 ml-4 z-10 relative"
+                    >
+                      {isFilling[section.id] ? 'Filling...' : 'Fill with AI'}
+                    </button>
+                  </div>
+                  
+                  {/* Section Content - Expandable */}
+                  {isExpanded && (
+                    <div className="px-6 pb-6 pt-0 border-t border-gray-100">
+                      {section.content && !section.filledContent && (
+                        <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                          <p className="text-xs font-semibold text-gray-600 mb-1">Original Content:</p>
+                          <p className="text-sm text-gray-700 whitespace-pre-wrap">{section.content}</p>
+                        </div>
+                      )}
+                      <textarea
+                        value={section.filledContent || section.content || ''}
+                        onChange={(e) => updateSectionContent(section.id, e.target.value)}
+                        placeholder="Section content will appear here..."
+                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all bg-gray-50 resize-none"
+                        rows={8}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      {section.filledContent && (
+                        <div className="mt-3 flex items-center gap-2 text-sm text-black">
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                          </svg>
+                          <span>Filled</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Generate Button */}
+          <div className="flex justify-center pt-4">
+            <button
+              onClick={handleGenerate}
+              disabled={isGenerating || sections.some(s => !s.filledContent)}
+              className="px-8 py-3 bg-gradient-to-r from-black to-black text-white rounded-xl font-semibold shadow-lg hover:shadow-xl hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+            >
+              {isGenerating ? 'Generating...' : 'Generate Final Document'}
+            </button>
+          </div>
+
+          {/* Output Format */}
+          <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Output Format
+            </label>
+            <div className="flex flex-wrap gap-3">
+              {['same', 'docx', 'pdf', 'html', 'txt'].map(format => (
+                <label key={format} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="outputFormat"
+                    value={format}
+                    checked={outputFormat === format}
+                    onChange={(e) => setOutputFormat(e.target.value as any)}
+                    className="w-4 h-4 text-black"
+                  />
+                  <span className="text-sm text-gray-700 capitalize">{format === 'same' ? 'Same as input' : format}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Export */}
+      {currentStep === 'export' && generatedDocument && (
+        <div className="bg-gradient-to-br from-black to-black border-2 border-black rounded-2xl p-8 shadow-lg">
+          <div className="flex items-start justify-between mb-6">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 bg-gradient-to-br from-black to-black rounded-xl flex items-center justify-center shadow-md">
+                <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-white mb-1">
+                  Document Generated Successfully!
+                </h3>
+                <p className="text-sm text-white font-medium">
+                  {generatedDocument.filename}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleDownload}
+              className="px-6 py-3 bg-gradient-to-r from-black to-black text-white rounded-xl font-semibold shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-200 flex items-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Download
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Error Message */}
+      {error && (
+        <div className="bg-red-50 border-2 border-red-200 rounded-xl p-5 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-red-500 flex items-center justify-center">
+              <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <p className="text-red-800 font-medium">{error}</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
