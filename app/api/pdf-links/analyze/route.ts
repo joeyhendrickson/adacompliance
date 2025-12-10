@@ -3,7 +3,7 @@ import axios from 'axios';
 import { extractTextFromDocument, findRelevantContext } from '@/lib/document-processor';
 import { chatCompletion } from '@/lib/openai';
 
-export const maxDuration = 600; // 10 minutes
+export const maxDuration = 300; // 5 minutes (Vercel Hobby plan limit)
 
 async function fetchPDF(url: string): Promise<Buffer | null> {
   try {

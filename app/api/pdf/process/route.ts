@@ -3,7 +3,7 @@ import { PDFDocument } from 'pdf-lib';
 import { extractTextFromDocument } from '@/lib/document-processor';
 import { chatCompletion } from '@/lib/openai';
 
-export const maxDuration = 600; // 10 minutes for processing multiple PDFs
+export const maxDuration = 300; // 5 minutes (Vercel Hobby plan limit)
 
 export async function POST(request: NextRequest) {
   try {

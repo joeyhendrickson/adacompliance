@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
 
-export const maxDuration = 600; // 10 minutes
+export const maxDuration = 300; // 5 minutes (Vercel Hobby plan limit)
 
 interface URLData {
   url: string;

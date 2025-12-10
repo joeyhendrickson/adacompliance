@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
 import { chatCompletion } from '@/lib/openai';
 
-export const maxDuration = 600; // 10 minutes
+export const maxDuration = 300; // 5 minutes (Vercel Hobby plan limit)
 
 async function fetchPageContent(url: string): Promise<string | null> {
   try {
