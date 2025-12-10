@@ -58,8 +58,9 @@ async function checkIndex() {
       console.log(`\n✅ Index found and dimensions match (1536)`);
     }
 
-    if (existingIndex.status !== 'Ready') {
-      console.log(`\n⚠️  Index status: ${existingIndex.status}`);
+    const status = existingIndex.status?.toString() || String(existingIndex.status);
+    if (status !== 'Ready') {
+      console.log(`\n⚠️  Index status: ${status}`);
       console.log(`   Wait for the index to be "Ready" before vectorizing.`);
     } else {
       console.log(`\n✅ Index is ready!`);
