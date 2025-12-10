@@ -107,7 +107,7 @@ function analyzeHTMLStructure(html: string): DocumentStructure {
   }
 
   // Extract heading order
-  headingMatches.forEach(match => {
+  headingMatches.forEach((match: string) => {
     const levelMatch = match.match(/<h([1-6])/i);
     if (levelMatch) {
       headingOrder.push(parseInt(levelMatch[1]));
@@ -148,7 +148,7 @@ function analyzeHTMLStructure(html: string): DocumentStructure {
 
   // Image analysis with detailed tagging
   const imageMatches = html.match(/<img[^>]*>/gi) || [];
-  imageMatches.forEach((img, index) => {
+  imageMatches.forEach((img: string, index: number) => {
     const hasAlt = img.includes('alt=');
     const altMatch = img.match(/alt=["']([^"']*)["']/i);
     const altValue = altMatch ? altMatch[1] : '';
@@ -188,7 +188,7 @@ function analyzeHTMLStructure(html: string): DocumentStructure {
   const selectMatches = html.match(/<select[^>]*>/gi) || [];
   const allFormFields = [...inputMatches, ...textareaMatches, ...selectMatches];
 
-  allFormFields.forEach((field, index) => {
+  allFormFields.forEach((field: string, index: number) => {
     const idMatch = field.match(/id=["']([^"']+)["']/i);
     const nameMatch = field.match(/name=["']([^"']+)["']/i);
     const typeMatch = field.match(/type=["']([^"']+)["']/i);
@@ -228,7 +228,7 @@ function analyzeHTMLStructure(html: string): DocumentStructure {
   }> = [];
   
   const tableMatches = html.match(/<table[^>]*>[\s\S]*?<\/table>/gi) || [];
-  tableMatches.forEach((table, index) => {
+  tableMatches.forEach((table: string, index: number) => {
     const hasHeaders = table.includes('<th');
     const hasScope = table.match(/<th[^>]*scope=["']/i) !== null;
     const hasCaption = table.includes('<caption');
@@ -261,7 +261,8 @@ function analyzeHTMLStructure(html: string): DocumentStructure {
       });
     }
 
-    if (!hasCaption && table.match(/<tr[^>]*>/gi)?.length > 1) {
+    const trMatches = table.match(/<tr[^>]*>/gi);
+    if (!hasCaption && trMatches && trMatches.length > 1) {
       issues.push({
         type: 'Table Missing Caption',
         description: `Table ${index + 1} missing <caption> element`,
