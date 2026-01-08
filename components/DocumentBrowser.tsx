@@ -26,8 +26,11 @@ export default function DocumentBrowser() {
   const loadDocuments = async () => {
     setLoading(true);
     try {
-      console.log('[DocumentBrowser] Fetching documents from /api/documents/list');
-      const response = await fetch('/api/documents/list');
+      // IMPORTANT: Query Pinecone directly, not Google Drive
+      console.log('[DocumentBrowser] Fetching documents from Pinecone via /api/documents/list');
+      const response = await fetch('/api/documents/list', {
+        cache: 'no-store', // Prevent caching
+      });
       console.log('[DocumentBrowser] Response status:', response.status);
       
       const data = await response.json();
@@ -108,7 +111,10 @@ export default function DocumentBrowser() {
           <h2 className="text-xl font-bold text-gray-800">Vector DB Browser</h2>
           <button
             type="button"
-            onClick={loadDocuments}
+            onClick={() => {
+              console.log('[DocumentBrowser] Refresh button clicked - calling loadDocuments');
+              loadDocuments();
+            }}
             className="px-4 py-2 text-sm font-medium text-black hover:bg-black hover:text-white rounded-lg transition-colors"
           >
             <span className="flex items-center gap-2">
