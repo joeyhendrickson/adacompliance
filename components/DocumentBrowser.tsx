@@ -28,8 +28,11 @@ export default function DocumentBrowser() {
     try {
       // IMPORTANT: Query Pinecone directly, not Google Drive
       console.log('[DocumentBrowser] Fetching documents from Pinecone via /api/documents/list');
-      const response = await fetch('/api/documents/list', {
+      const response = await fetch(`/api/documents/list?t=${Date.now()}`, {
         cache: 'no-store', // Prevent caching
+        headers: {
+          'Cache-Control': 'no-cache',
+        },
       });
       console.log('[DocumentBrowser] Response status:', response.status);
       
