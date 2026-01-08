@@ -26,14 +26,41 @@ export default function DocumentBrowser() {
   const loadDocuments = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/google-drive/list');
-      const data = await response.json();
+      console.log('[DocumentBrowser] Fetching documents from /api/documents/list');
+      const response = await fetch('/api/documents/list');
+      console.log('[DocumentBrowser] Response status:', response.status);
       
-      if (response.ok && data.files) {
-        setDocuments(data.files);
+      const data = await response.json();
+      console.log('[DocumentBrowser] Response data:', data);
+      
+      if (response.ok && data.success) {
+        if (data.documents && data.documents.length > 0) {
+          // Convert to DocumentInfo format
+          const docInfos: DocumentInfo[] = data.documents.map((doc: any) => ({
+            fileId: doc.fileId,
+            name: doc.title,
+            title: doc.title,
+            mimeType: doc.mimeType,
+            modifiedTime: doc.modifiedTime,
+            chunkCount: doc.chunkCount,
+          }));
+          console.log('[DocumentBrowser] Loaded', docInfos.length, 'documents');
+          setDocuments(docInfos);
+        } else {
+          // No documents found
+          console.log('[DocumentBrowser] No documents found. Message:', data.message);
+          setDocuments([]);
+          if (data.message) {
+            console.log('Info:', data.message);
+          }
+        }
+      } else {
+        console.error('[DocumentBrowser] Error loading documents:', data.error || 'Unknown error', data);
+        setDocuments([]);
       }
     } catch (error) {
-      console.error('Error loading documents:', error);
+      console.error('[DocumentBrowser] Error loading documents:', error);
+      setDocuments([]);
     } finally {
       setLoading(false);
     }
@@ -110,12 +137,22 @@ export default function DocumentBrowser() {
           {loading ? (
             <div className="text-center py-8">
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-black"></div>
-              <p className="text-sm text-gray-500 mt-2">Loading documents...</p>
+              <p className="text-sm text-gray-500 mt-2">Loading documents from Pinecone...</p>
             </div>
           ) : filteredDocuments.length === 0 ? (
-            <p className="text-sm text-gray-500 text-center py-8">
-              {searchQuery ? 'No documents match your search' : 'No documents found'}
-            </p>
+            <div className="text-center py-8">
+              <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <p className="text-sm font-semibold text-gray-700 mb-2">
+                {searchQuery ? 'No documents match your search' : 'No documents found in vector database'}
+              </p>
+              <p className="text-xs text-gray-500 mt-2 max-w-md mx-auto">
+                {searchQuery 
+                  ? 'Try a different search term'
+                  : 'The vector database appears to be empty. To add documents:\n1. Go to the "Vectorization Setup" tab\n2. Use the Google Drive sync feature to vectorize your documents\n3. Or use the command line: npm run vectorize'}
+              </p>
+            </div>
           ) : (
             <div className="space-y-2">
               {filteredDocuments.map((doc) => (
@@ -132,7 +169,7 @@ export default function DocumentBrowser() {
                     {doc.title || doc.name || 'Untitled Document'}
                   </p>
                   <p className={`text-xs mt-1 ${selectedDoc?.fileId === doc.fileId ? 'text-gray-300' : 'text-gray-500'}`}>
-                    {doc.mimeType?.includes('pdf') ? 'PDF' :
+                    {doc.chunkCount ? `${doc.chunkCount} chunk${doc.chunkCount !== 1 ? 's' : ''}` : 'Document'} • {doc.mimeType?.includes('pdf') ? 'PDF' :
                      doc.mimeType?.includes('word') ? 'Word' :
                      doc.mimeType?.includes('text') ? 'Text' :
                      'Document'}

@@ -101,3 +101,4 @@ Once all environment variables are added:
 - If Pinecone queries fail, verify `PINECONE_API_KEY` and `PINECONE_INDEX_NAME` are correct
 - If OpenAI features don't work, check `OPENAI_API_KEY` is set correctly
 - Remember to redeploy after adding/updating environment variables
+

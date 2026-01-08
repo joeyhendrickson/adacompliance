@@ -349,3 +349,4 @@ export default function Triage({ onBack }: { onBack?: () => void }) {
     </div>
   );
 }
+
