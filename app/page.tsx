@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import ChatInterface from '@/components/ChatInterface';
 import DocumentProcessor from '@/components/DocumentProcessor';
-import GoogleDriveTest from '@/components/GoogleDriveTest';
 import DocumentBrowser from '@/components/DocumentBrowser';
 import AppMenu from '@/components/AppMenu';
 import PDFProcessor from '@/components/PDFProcessor';
@@ -13,7 +12,7 @@ import Triage from '@/components/Triage';
 import PDFLinkProcessor from '@/components/PDFLinkProcessor';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'documents' | 'drive' | 'browser'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'documents' | 'browser'>('chat');
   const [activeApp, setActiveApp] = useState<string | null>(null);
 
   useEffect(() => {
@@ -99,27 +98,6 @@ export default function Home() {
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                console.log('Drive tab clicked');
-                setActiveTab('drive');
-              }}
-              className={`flex-1 min-w-[140px] py-3 px-6 rounded-xl font-semibold transition-all duration-300 ${
-                activeTab === 'drive'
-                  ? 'bg-black text-white shadow-lg transform scale-105'
-                  : 'text-black hover:bg-gray-100 border border-gray-300'
-              }`}
-            >
-              <span className="flex items-center justify-center gap-2">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
-                </svg>
-                Vectorization Setup
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
                 console.log('Browser tab clicked');
                 setActiveTab('browser');
               }}
@@ -154,10 +132,8 @@ export default function Home() {
               <ChatInterface />
             ) : activeTab === 'documents' ? (
               <DocumentProcessor />
-            ) : activeTab === 'browser' ? (
-              <DocumentBrowser />
             ) : (
-              <GoogleDriveTest />
+              <DocumentBrowser />
             )}
           </div>
         </div>
